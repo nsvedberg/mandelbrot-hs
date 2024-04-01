@@ -6,6 +6,7 @@ module Main (main) where
 import Control.Monad
 import Data.Complex
 import Data.Time.Clock
+import Data.Time.Format
 import qualified Data.Vector.Storable.Mutable as V
 import Data.Word
 import Foreign.C.Types
@@ -78,7 +79,11 @@ run window renderer = do
 -- Write what's on screen to file
 saveRender :: Renderer -> IO ()
 saveRender renderer = do
-  putStrLn "Saved screenshot to "
+  currentTime <- getCurrentTime
+  let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d-%H:%M:%S" currentTime
+      filename = formattedTime ++ ".png"
+
+  putStrLn $ "Saved screenshot to " ++ filename
 
 -- Render the mandelbrot set, within the given limits.
 renderMandelbrot :: Renderer -> V4 Float -> Int -> IO ()
