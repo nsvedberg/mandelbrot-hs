@@ -2,12 +2,12 @@
 
 Generate an image of the famous Mandelbrot set fractal using SDL2.
 
-![Example screenshot](/Screenshot.png)
+![Example screenshot](/docs/Screenshot.png)
 
 To build:
 
-    stack build
+    cabal build
 
 To run:
 
-    stack run
+    cabal run
