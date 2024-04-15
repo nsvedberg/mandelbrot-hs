@@ -9,15 +9,14 @@ import Data.Time.Clock
 import Data.Time.Format
 import qualified Data.Vector.Storable.Mutable as V
 import Data.Word
+import Foreign.C.String
 import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
-import SDL
-import qualified SDL.Raw.Video as Raw
-import qualified SDL.Raw.Types as Raw
-import qualified SDL.Internal.Types
 import Foreign.Storable
-import Foreign.C.String
+import SDL
+import qualified SDL.Internal.Types
+import qualified SDL.Raw as Raw
 
 winWidth :: CInt
 winWidth = 1200
@@ -70,11 +69,11 @@ run window renderer = do
 
   -- Screenshot when S is pressed.
   case payload of
-        KeyboardEvent keyboardEvent |
-          keyboardEventKeyMotion keyboardEvent == Pressed
-            && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeS
-          -> saveRender window renderer
-        _ -> return ()
+    KeyboardEvent keyboardEvent
+      | keyboardEventKeyMotion keyboardEvent == Pressed
+          && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeS ->
+          saveRender window renderer
+    _ -> return ()
 
   -- If nothing happened, keep running.
   unless shouldQuit (run window renderer)
@@ -83,36 +82,37 @@ run window renderer = do
 saveRender :: Window -> Renderer -> IO ()
 saveRender window renderer = do
   currentTime <- getCurrentTime
-
   let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d-%H:%M:%S" currentTime
-
-  filename <- newCString $ formattedTime ++ ".png"
+      filename = "screenshots/" ++ formattedTime ++ ".png"
+  filenameC <- newCString filename
 
   let (SDL.Internal.Types.Renderer rawRenderer) = renderer
   let (SDL.Internal.Types.Window rawWindow) = window
 
   pixFormat <- Raw.getWindowPixelFormat rawWindow
 
-  surface <- (Raw.createRGBSurface 
-    0
-    winWidth
-    winHeight
-    32
-    0x00ff0000
-    0x0000ff00
-    0x000000ff
-    0xff000000)
+  surface <-
+    Raw.createRGBSurface
+      0
+      winWidth
+      winHeight
+      32
+      0x00ff0000
+      0x0000ff00
+      0x000000ff
+      0xff000000
 
   pixels <- Raw.surfacePixels <$> peek surface
 
-  Raw.renderReadPixels
-    rawRenderer
-    nullPtr
-    pixFormat
-    pixels
-    4800
+  _ <-
+    Raw.renderReadPixels
+      rawRenderer
+      nullPtr
+      pixFormat
+      pixels
+      4800
 
-  Raw.saveBMP surface filenameC
+  _ <- Raw.saveBMP surface filenameC
 
   putStrLn $ "Saved screenshot to " ++ filename
 
@@ -133,7 +133,7 @@ renderMandelbrot renderer limits maxIter = do
 
       -- For on-screen coordinates x and y scaled to the provided limits, get the
       -- value of the mandelbrot function.
-      value x y = heatMapColor $ (fromIntegral m) / (fromIntegral maxIter)
+      value x y = heatMapColor $ fromIntegral m / fromIntegral maxIter
         where
           V4 xMin yMin xMax yMax = limits
           fx = fromIntegral x
@@ -175,9 +175,9 @@ renderMandelbrot renderer limits maxIter = do
 heatMapColor :: Float -> V3 Word8
 heatMapColor x = V3 r b g
   where
-    r = round $ max 0 $ 255 * (cos $ (3 * pi / 2) * (x ** s - rp))
-    g = round $ max 0 $ 255 * (cos $ (3 * pi / 2) * (x ** s - gp))
-    b = round $ max 0 $ 255 * (cos $ (3 * pi / 2) * (x ** s - bp))
+    r = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** s - rp))
+    g = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** s - gp))
+    b = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** s - bp))
     -- The center of the red peak.
     rp = 10 / 15
     -- The center of the green peak.
