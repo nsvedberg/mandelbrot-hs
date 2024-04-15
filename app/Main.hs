@@ -13,6 +13,11 @@ import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
 import SDL
+import qualified SDL.Raw.Video as Raw
+import qualified SDL.Raw.Types as Raw
+import qualified SDL.Internal.Types
+import Foreign.Storable
+import Foreign.C.String
 
 winWidth :: CInt
 winWidth = 1200
@@ -63,25 +68,51 @@ run window renderer = do
         WindowClosedEvent _ -> True
         _ -> False
 
-  -- Screenshot when S is pressed
-  let shouldScreenshot = case payload of
-        KeyboardEvent keyboardEvent ->
+  -- Screenshot when S is pressed.
+  case payload of
+        KeyboardEvent keyboardEvent |
           keyboardEventKeyMotion keyboardEvent == Pressed
             && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeS
-        WindowClosedEvent _ -> True
-        _ -> False
-
-  when shouldScreenshot (saveRender renderer)
+          -> saveRender window renderer
+        _ -> return ()
 
   -- If nothing happened, keep running.
   unless shouldQuit (run window renderer)
 
 -- Write what's on screen to file
-saveRender :: Renderer -> IO ()
-saveRender renderer = do
+saveRender :: Window -> Renderer -> IO ()
+saveRender window renderer = do
   currentTime <- getCurrentTime
+
   let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d-%H:%M:%S" currentTime
-      filename = formattedTime ++ ".png"
+
+  filename <- newCString $ formattedTime ++ ".png"
+
+  let (SDL.Internal.Types.Renderer rawRenderer) = renderer
+  let (SDL.Internal.Types.Window rawWindow) = window
+
+  pixFormat <- Raw.getWindowPixelFormat rawWindow
+
+  surface <- (Raw.createRGBSurface 
+    0
+    winWidth
+    winHeight
+    32
+    0x00ff0000
+    0x0000ff00
+    0x000000ff
+    0xff000000)
+
+  pixels <- Raw.surfacePixels <$> peek surface
+
+  Raw.renderReadPixels
+    rawRenderer
+    nullPtr
+    pixFormat
+    pixels
+    4800
+
+  Raw.saveBMP surface filenameC
 
   putStrLn $ "Saved screenshot to " ++ filename
 
