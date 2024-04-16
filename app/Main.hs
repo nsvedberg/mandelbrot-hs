@@ -44,6 +44,9 @@ winWidth = 1200
 winHeight :: CInt
 winHeight = 800
 
+defaultLimits :: V4 Float
+defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
+
 -- Entry point.
 main :: IO ()
 main = do
@@ -90,7 +93,7 @@ run window renderer = do
     _ -> return ()
 
   -- Change modes with number keys
-  -- There is definitely a cleaner way to do this i just hate haskell
+  -- There is definitely a cleaner way to do this Haskell just doesn't have finally blocks
   case payload of
     KeyboardEvent keyboardEvent
       | keyboardEventKeyMotion keyboardEvent == Pressed
@@ -103,6 +106,24 @@ run window renderer = do
           && keysymKeycode (keyboardEventKeysym keyboardEvent) == Keycode2 ->
           do
             modify (\s -> s {appStateFractal = JuliaSet})
+            modify (\s -> s {appStateShouldUpdate = True})
+    _ -> return ()
+
+  -- Zoom in and out with UP/DOWN ARROW
+  case payload of
+    KeyboardEvent keyboardEvent
+      | keyboardEventKeyMotion keyboardEvent == Pressed
+          && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeUp ->
+          do
+            scale <- gets appStateScale
+            modify (\s -> s {appStateScale = scale - 0.1})
+            modify (\s -> s {appStateShouldUpdate = True})
+    KeyboardEvent keyboardEvent
+      | keyboardEventKeyMotion keyboardEvent == Pressed
+          && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeDown ->
+          do
+            scale <- gets appStateScale
+            modify (\s -> s {appStateScale = scale + 0.1})
             modify (\s -> s {appStateShouldUpdate = True})
     _ -> return ()
 
@@ -156,9 +177,6 @@ saveRender window renderer = do
   _ <- Raw.saveBMP surface filenameC
 
   liftIO $ putStrLn $ "Saved screenshot to " ++ filename
-
-defaultLimits :: V4 Float
-defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 
 -- Render the fractal given the callback function
 renderFractal :: (Int -> Complex Float -> Int) -> Renderer -> Int -> AppMonad ()
@@ -244,6 +262,7 @@ mandelbrot maxIter c = helper 0 0
         then n
         else helper (n + 1) (z * z + c)
 
+-- Evaluate the julia set at one with a constant
 julia :: Int -> Complex Float -> Int
 julia maxIter = helper 0
   where
