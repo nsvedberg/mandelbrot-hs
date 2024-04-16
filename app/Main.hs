@@ -9,6 +9,7 @@ import Control.Monad.State
 import Data.Complex
 import Data.Time.Clock
 import Data.Time.Format
+import qualified Data.Vector.Storable.Mutable as V
 import Data.Word
 import Foreign.C.String
 import Foreign.C.Types
@@ -16,21 +17,24 @@ import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
 import SDL hiding (get)
-import qualified Data.Vector.Storable.Mutable as V
 import qualified SDL.Internal.Types
 import qualified SDL.Raw as Raw
 
 data FractalType = Mandelbrot | JuliaSet
 
-data AppState = AppState {
-  appStateFractal :: FractalType,
-  appStateScale :: Float
+data AppState = AppState
+  { appStateFractal :: FractalType,
+    appStateShouldUpdate :: Bool,
+    appStateScale :: Float
   }
 
-defaultAppState = AppState {
-  appStateFractal = Mandelbrot,
-  appStateScale = 1.0
-  }
+defaultAppState :: AppState
+defaultAppState =
+  AppState
+    { appStateFractal = Mandelbrot,
+      appStateShouldUpdate = True,
+      appStateScale = 1.0
+    }
 
 type AppMonad = StateT AppState IO
 
@@ -58,7 +62,7 @@ main = do
   renderer <- createRenderer window (-1) defaultRenderer
 
   -- Handle events from the user.
-  runStateT (run window renderer) defaultAppState
+  _ <- runStateT (run window renderer) defaultAppState
 
   -- No more events, clean up our window.
   destroyWindow window
@@ -85,8 +89,32 @@ run window renderer = do
           saveRender window renderer
     _ -> return ()
 
-  -- Render the mandelbrot set.
-  renderMandelbrot renderer 100
+  -- Change modes with number keys
+  -- There is definitely a cleaner way to do this i just hate haskell
+  case payload of
+    KeyboardEvent keyboardEvent
+      | keyboardEventKeyMotion keyboardEvent == Pressed
+          && keysymKeycode (keyboardEventKeysym keyboardEvent) == Keycode1 ->
+          do
+            modify (\s -> s {appStateFractal = Mandelbrot})
+            modify (\s -> s {appStateShouldUpdate = True})
+    KeyboardEvent keyboardEvent
+      | keyboardEventKeyMotion keyboardEvent == Pressed
+          && keysymKeycode (keyboardEventKeysym keyboardEvent) == Keycode2 ->
+          do
+            modify (\s -> s {appStateFractal = JuliaSet})
+            modify (\s -> s {appStateShouldUpdate = True})
+    _ -> return ()
+
+  -- Render the current mode selected
+  shouldUpdate <- gets appStateShouldUpdate
+  when shouldUpdate $
+    do
+      mode <- gets appStateFractal
+      case mode of
+        Mandelbrot -> renderFractal mandelbrot renderer 100
+        JuliaSet -> renderFractal julia renderer 100
+      modify (\s -> s {appStateShouldUpdate = False})
 
   -- If nothing happened, keep running.
   unless shouldQuit (run window renderer)
@@ -115,7 +143,7 @@ saveRender window renderer = do
       0x000000ff
       0xff000000
 
-  pixels <- Raw.surfacePixels <$> (liftIO $ peek surface)
+  pixels <- Raw.surfacePixels <$> liftIO (peek surface)
 
   _ <-
     Raw.renderReadPixels
@@ -132,10 +160,10 @@ saveRender window renderer = do
 defaultLimits :: V4 Float
 defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 
--- Render the mandelbrot set, within the given limits.
-renderMandelbrot :: Renderer -> Int -> AppMonad ()
-renderMandelbrot renderer maxIter = do
-  scale <- appStateScale <$> get
+-- Render the fractal given the callback function
+renderFractal :: (Int -> Complex Float -> Int) -> Renderer -> Int -> AppMonad ()
+renderFractal callback renderer maxIter = do
+  scale <- gets appStateScale
   let limits = (* scale) <$> defaultLimits
 
   -- Clear the screen.
@@ -162,7 +190,7 @@ renderMandelbrot renderer maxIter = do
           -- The imaginary part of the complex number.
           b = ((fy * (yMax - yMin)) / ((fromIntegral winHeight - 1) - yMin)) + yMin
           -- The value of the mandelbrot fractal.
-          m = mandelbrot maxIter (a :+ b)
+          m = callback maxIter (a :+ b)
 
       -- Write an SDL vector3 to the given address.
       writeVal addr (V3 w1 w2 w3) =
@@ -215,3 +243,12 @@ mandelbrot maxIter c = helper 0 0
       if n >= maxIter || magnitude z > 2
         then n
         else helper (n + 1) (z * z + c)
+
+julia :: Int -> Complex Float -> Int
+julia maxIter = helper 0
+  where
+    constant = (-0.4) :+ 0.6
+    helper n z =
+      if n >= maxIter || magnitude z > 2
+        then n
+        else helper (n + 1) (z * z + constant)
