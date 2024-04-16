@@ -35,3 +35,13 @@ To run:
 ```bash
 cabal run
 ```
+
+## Controls
+
+| Key | Description |
+| :-: | :- |
+| Q | Quits the program |
+| S | Saves a screenshot of the current render to the `screenshots/` folder |
+| [NUM] | Changes fractal mode. `1`: Mandelbrot, `2`: Julia Set |
+| ↑ | Zoom in |
+| ↓ | Zoom out |
