@@ -4,28 +4,41 @@
 module Main (main) where
 
 import Control.Monad
+import Control.Monad.IO.Class
+import Control.Monad.State
 import Data.Complex
 import Data.Time.Clock
 import Data.Time.Format
-import qualified Data.Vector.Storable.Mutable as V
 import Data.Word
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
-import SDL
+import SDL hiding (get)
+import qualified Data.Vector.Storable.Mutable as V
 import qualified SDL.Internal.Types
 import qualified SDL.Raw as Raw
+
+data FractalType = Mandelbrot | JuliaSet
+
+data AppState = AppState {
+  appStateFractal :: FractalType,
+  appStateScale :: Float
+  }
+
+defaultAppState = AppState {
+  appStateFractal = Mandelbrot,
+  appStateScale = 1.0
+  }
+
+type AppMonad = StateT AppState IO
 
 winWidth :: CInt
 winWidth = 1200
 
 winHeight :: CInt
 winHeight = 800
-
-defaultLimits :: V4 Float
-defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 
 -- Entry point.
 main :: IO ()
@@ -44,17 +57,14 @@ main = do
   -- Create a renderer from that window.
   renderer <- createRenderer window (-1) defaultRenderer
 
-  -- Render the mandelbrot set.
-  renderMandelbrot renderer defaultLimits 100
-
   -- Handle events from the user.
-  run window renderer
+  runStateT (run window renderer) defaultAppState
 
   -- No more events, clean up our window.
   destroyWindow window
 
 -- The main loop for the app.
-run :: Window -> Renderer -> IO ()
+run :: Window -> Renderer -> AppMonad ()
 run window renderer = do
   -- Wait for an event to happen.
   (Event _timestamp payload) <- waitEvent
@@ -75,16 +85,19 @@ run window renderer = do
           saveRender window renderer
     _ -> return ()
 
+  -- Render the mandelbrot set.
+  renderMandelbrot renderer 100
+
   -- If nothing happened, keep running.
   unless shouldQuit (run window renderer)
 
 -- Write what's on screen to file
-saveRender :: Window -> Renderer -> IO ()
+saveRender :: Window -> Renderer -> AppMonad ()
 saveRender window renderer = do
-  currentTime <- getCurrentTime
+  currentTime <- liftIO getCurrentTime
   let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d-%H:%M:%S" currentTime
       filename = "screenshots/" ++ formattedTime ++ ".png"
-  filenameC <- newCString filename
+  filenameC <- liftIO (newCString filename)
 
   let (SDL.Internal.Types.Renderer rawRenderer) = renderer
   let (SDL.Internal.Types.Window rawWindow) = window
@@ -102,7 +115,7 @@ saveRender window renderer = do
       0x000000ff
       0xff000000
 
-  pixels <- Raw.surfacePixels <$> peek surface
+  pixels <- Raw.surfacePixels <$> (liftIO $ peek surface)
 
   _ <-
     Raw.renderReadPixels
@@ -114,11 +127,17 @@ saveRender window renderer = do
 
   _ <- Raw.saveBMP surface filenameC
 
-  putStrLn $ "Saved screenshot to " ++ filename
+  liftIO $ putStrLn $ "Saved screenshot to " ++ filename
+
+defaultLimits :: V4 Float
+defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 
 -- Render the mandelbrot set, within the given limits.
-renderMandelbrot :: Renderer -> V4 Float -> Int -> IO ()
-renderMandelbrot renderer limits maxIter = do
+renderMandelbrot :: Renderer -> Int -> AppMonad ()
+renderMandelbrot renderer maxIter = do
+  scale <- appStateScale <$> get
+  let limits = (* scale) <$> defaultLimits
+
   -- Clear the screen.
   rendererDrawColor renderer $= V4 0 0 0 255
   clear renderer
@@ -128,7 +147,7 @@ renderMandelbrot renderer limits maxIter = do
 
   -- Get access to the raw bytes in the texture.
   (ptr, pitch) <- lockTexture texture Nothing
-  fptr <- newForeignPtr_ (castPtr ptr :: Ptr Word8)
+  fptr <- liftIO $ newForeignPtr_ (castPtr ptr :: Ptr Word8)
   let vec = V.unsafeFromForeignPtr0 fptr (fromIntegral $ winWidth * pitch)
 
       -- For on-screen coordinates x and y scaled to the provided limits, get the

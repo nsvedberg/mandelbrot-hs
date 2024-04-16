@@ -71,6 +71,7 @@ executable mandelbrot-hs
                     , sdl2
                     , time
                     , vector
+                    , mtl
 
     -- Directories containing source files.
     hs-source-dirs:   app
