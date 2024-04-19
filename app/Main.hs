@@ -7,6 +7,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.State
 import Data.Complex
+import Data.Functor
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Word
@@ -25,9 +26,9 @@ data FractalType = Mandelbrot | JuliaSet
 
 -- The area of the fractal that is visible to the user.
 data Viewport = Viewport
-  { viewportCenter :: V2 Float,
-    viewportWidth :: Float,
-    viewportHeight :: Float
+  { viewportCenter :: V2 Float
+  , viewportWidth :: Float
+  , viewportHeight :: Float
   }
 
 -- Get the X and Y limits of a viewport.
@@ -49,30 +50,34 @@ scaleViewport vp s = vp { viewportWidth = w*s, viewportHeight = h*s}
 
 -- An aggregation of state for our application.
 data AppState = AppState
-  { appFractal :: FractalType,
-    appShouldUpdate :: Bool,
-    appShouldQuit :: Bool,
-    appWinWidth :: Int,
-    appWinHeight :: Int,
-    appMaxIter :: Int,
-    appViewport :: Viewport
+  { appFractal :: FractalType
+  , appShouldUpdate :: Bool
+  , appShouldQuit :: Bool
+  , appShouldShowInfo :: Bool
+  , appWinWidth :: Int
+  , appWinHeight :: Int
+  , appMaxIter :: Int
+  , appViewport :: Viewport
+  , appInfoTexture :: Maybe Texture
+  , appFractalTexture :: Maybe Texture
   }
 
 -- The default state of our application.
 defaultAppState :: AppState
 defaultAppState =
   AppState
-    { appFractal = Mandelbrot,
-      appShouldUpdate = True,
-      appShouldQuit = False,
-      appWinWidth = 1200,
-      appWinHeight = 800,
-      appMaxIter = 100,
-      appViewport = Viewport {
-        viewportCenter = V2 0 0,
-        viewportWidth = 3.36,
-        viewportHeight = 2.24
-      }
+    { appFractal = Mandelbrot
+    , appShouldUpdate = True
+    , appShouldQuit = False
+    , appShouldShowInfo = False
+    , appWinWidth = 1200
+    , appWinHeight = 800
+    , appMaxIter = 100
+    , appViewport = Viewport { viewportCenter = V2 0 0
+                             , viewportWidth = 3.36
+                             , viewportHeight = 2.24 }
+    , appInfoTexture = Nothing
+    , appFractalTexture = Nothing
     }
 
 -- This is a monad "transformer" which combines the functionallity of an IO
@@ -132,8 +137,21 @@ main = do
   -- Create a renderer from that window.
   renderer <- createRenderer window (-1) defaultRenderer
 
+  -- Create a texture for the info screen.
+  infoSurface <- loadBMP "help-info.bmp"
+  infoTexture <- createTextureFromSurface renderer infoSurface
+
+  -- Create a texture to draw the fractal to.
+  fractalTexture <- createTexture
+    renderer
+    RGB888
+    TextureAccessStreaming (V2 winWidth winHeight)
+
   -- Handle events from the user.
-  _ <- runStateT (run window renderer) defaultAppState
+  _ <- runStateT
+    (run window renderer)
+    defaultAppState { appInfoTexture = Just infoTexture
+                    , appFractalTexture = Just fractalTexture }
 
   -- No more events, clean up our window.
   destroyWindow window
@@ -146,8 +164,8 @@ run window renderer = do
   (Event _timestamp payload) <- waitEvent
 
   case payload of
-    KeyboardEvent (KeyboardEventData { keyboardEventKeyMotion = Pressed,
-                                       keyboardEventKeysym = sym }) ->
+    KeyboardEvent (KeyboardEventData { keyboardEventKeyMotion = Pressed
+                                     , keyboardEventKeysym = sym }) ->
       case (keysymKeycode sym) of
         -- Screenshot when S is pressed.
         KeycodeS -> saveRender window renderer
@@ -164,23 +182,36 @@ run window renderer = do
 
           vp <- gets appViewport
 
-          modify (\s -> s { appViewport = scaleViewport vp scale,
-                            appShouldUpdate = True
+          modify (\s -> s { appViewport = scaleViewport vp scale
+                          , appShouldUpdate = True
                           })
+        -- Show the help screen when ? is pressed.
+        KeycodeSlash -> modify (\s -> s { appShouldShowInfo = True })
         -- Quit when the user presses Q.
         KeycodeQ -> modify (\s -> s { appShouldQuit = True})
+        -- Ignore other keycodes.
+        _ -> return ()
+
+    KeyboardEvent (KeyboardEventData { keyboardEventKeyMotion = Released
+                                     , keyboardEventKeysym = sym}) ->
+      case (keysymKeycode sym) of
+        -- Quit showing the help screen when ? is released.
+        KeycodeSlash -> modify (\s -> s { appShouldShowInfo = False })
+        -- Ignore other keycodes.
         _ -> return ()
 
     -- If the user clicks a point on the screen, move the viewport to that point.
-    MouseButtonEvent (MouseButtonEventData { mouseButtonEventButton = ButtonLeft,
-                                             mouseButtonEventMotion = Pressed,
-                                             mouseButtonEventPos = pos }) -> do
+    MouseButtonEvent (MouseButtonEventData { mouseButtonEventButton = ButtonLeft
+                                           , mouseButtonEventMotion = Pressed
+                                           , mouseButtonEventPos = pos
+                                           }) -> do
       winWidth <- gets appWinWidth
       winHeight <- gets appWinHeight
 
-      vp@(Viewport { viewportCenter = V2 centerX centerY,
-                  viewportWidth = vpWidth,
-                  viewportHeight = vpHeight }) <- gets appViewport
+      vp@(Viewport { viewportCenter = V2 centerX centerY
+                   , viewportWidth = vpWidth
+                   , viewportHeight = vpHeight
+                   }) <- gets appViewport
 
       -- The amount that the center is moved should be relative to the size of
       -- the viewport.
@@ -191,8 +222,9 @@ run window renderer = do
           offsetY = relativeY*vpHeight
           newCenter = V2 (centerX + offsetX) (centerY + offsetY)
 
-      modify (\s -> s { appViewport = vp { viewportCenter = newCenter },
-                        appShouldUpdate = True })
+      modify (\s -> s { appViewport = vp { viewportCenter = newCenter }
+                      , appShouldUpdate = True
+                      })
 
     WindowResizedEvent (WindowResizedEventData
       { windowResizedEventSize = V2 width height }) ->
@@ -206,9 +238,7 @@ run window renderer = do
     _ -> return ()
 
   -- Render the current fractal that is selected.
-  shouldUpdate <- gets appShouldUpdate
-  when shouldUpdate $ renderFractal renderer
-                   >> modify (\s -> s {appShouldUpdate = False})
+  renderAll renderer
 
   -- If nothing happened, keep running.
   shouldQuit <- gets appShouldQuit
@@ -273,9 +303,34 @@ saveRender window renderer = do
 
   liftIO $ putStrLn $ "Saved screenshot to " ++ filename
 
+-- Render the entire scene.
+renderAll :: Renderer -> AppMonad()
+renderAll renderer = do
+
+  -- Add the fractal texture to the renderer.
+  fractalTexture <- gets appFractalTexture
+  shouldUpdate <- gets appShouldUpdate
+  case fractalTexture of
+    Just tex -> do
+      -- If the fractal texture is stale, update it.
+      when shouldUpdate $ updateFractalTexture renderer tex
+      copy renderer tex Nothing Nothing
+    Nothing -> return ()
+
+  -- If the user is pressing the ? key, show the info page.
+  shouldShowInfo <- gets appShouldShowInfo
+  infoTexture <- gets appInfoTexture
+
+  case infoTexture of
+    Just tex -> when shouldShowInfo $ copy renderer tex Nothing Nothing
+    Nothing -> return ()
+
+  -- Display everything which was rendered.
+  present renderer
+
 -- Render the fractal chosen by the user.
-renderFractal :: Renderer -> AppMonad ()
-renderFractal renderer = do
+updateFractalTexture :: Renderer -> Texture -> AppMonad ()
+updateFractalTexture renderer texture = do
 
   -- Get some parameters.
   maxIter <- gets appMaxIter
@@ -288,13 +343,6 @@ renderFractal renderer = do
   let func = case fractalType of
         Mandelbrot -> mandelbrot
         JuliaSet -> julia
-
-  -- Clear the screen.
-  rendererDrawColor renderer $= V4 0 0 0 255
-  clear renderer
-
-  -- Create a texture to draw to.
-  texture <- createTexture renderer RGB888 TextureAccessStreaming (V2 winWidth winHeight)
 
   -- Get access to the raw bytes in the texture.
   (ptr, pitch) <- lockTexture texture Nothing
@@ -331,9 +379,7 @@ renderFractal renderer = do
   -- We're done accessing the raw bytes in the texture.
   unlockTexture texture
 
-  -- Copy the texture to the renderer and display it on the screen.
-  copy renderer texture Nothing Nothing
-  present renderer
+  modify (\s -> s {appShouldUpdate = False})
 
 -- Generate a color, given a value between 0.0 and 1.0.
 --
