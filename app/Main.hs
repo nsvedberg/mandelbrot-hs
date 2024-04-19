@@ -174,7 +174,7 @@ saveRender window renderer = do
   -- Generate the filename from the current date and time.
   currentTime <- liftIO getCurrentTime
   let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d-%H:%M:%S" currentTime
-      filename = "screenshots/" ++ formattedTime ++ ".png"
+      filename = "screenshots/" ++ formattedTime ++ ".bmp"
   filenameC <- liftIO (newCString filename)
 
   -- Since the functions we need form SDL, namely RenderReadPixels[1] and
