@@ -110,9 +110,24 @@ main = do
   -- Create a new SDL window with default settings.
   let winWidth = fromIntegral $ appWinWidth defaultAppState
       winHeight = fromIntegral $ appWinHeight defaultAppState
+
+  -- TODO: Allow the window to be resizable.
+  --
+  -- In theory, the window being resizable should be fine, because the width
+  -- and the height of the window are being kept track of by our application.
+  -- However, on my machine, the program crashes immediately when the window is
+  -- resized.
+  --
+  -- This is almost certainly related to the unsafe portion of the render
+  -- function. It probably has something to do with the pitch, and being
+  -- aligned to a certain byte multiple. However, I don't have time to debug
+  -- this now.
   window <- createWindow
     "Mandlebrot Set"
-    defaultWindow { windowInitialSize = V2 winWidth winHeight }
+    defaultWindow
+      { windowInitialSize = V2 winWidth winHeight
+   -- , windowResizable = True
+      }
 
   -- Create a renderer from that window.
   renderer <- createRenderer window (-1) defaultRenderer
@@ -179,8 +194,15 @@ run window renderer = do
       modify (\s -> s { appViewport = vp { viewportCenter = newCenter },
                         appShouldUpdate = True })
 
+    WindowResizedEvent (WindowResizedEventData
+      { windowResizedEventSize = V2 width height }) ->
+        modify (\s -> s { appWinWidth = fromIntegral width
+                        , appWinHeight = fromIntegral height
+                        , appShouldUpdate = True})
+
     -- Quit when the user closes the window.
     WindowClosedEvent _ -> modify (\s -> s { appShouldQuit = True})
+
     _ -> return ()
 
   -- Render the current fractal that is selected.
