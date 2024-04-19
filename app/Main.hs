@@ -131,8 +131,9 @@ run window renderer = do
   (Event _timestamp payload) <- waitEvent
 
   case payload of
-    KeyboardEvent e@(KeyboardEventData { keyboardEventKeyMotion = Pressed }) ->
-      case (keysymKeycode $ keyboardEventKeysym e) of
+    KeyboardEvent (KeyboardEventData { keyboardEventKeyMotion = Pressed,
+                                       keyboardEventKeysym = sym }) ->
+      case (keysymKeycode sym) of
         -- Screenshot when S is pressed.
         KeycodeS -> saveRender window renderer
         -- Change modes with number keys.
@@ -154,6 +155,30 @@ run window renderer = do
         -- Quit when the user presses Q.
         KeycodeQ -> modify (\s -> s { appShouldQuit = True})
         _ -> return ()
+
+    -- If the user clicks a point on the screen, move the viewport to that point.
+    MouseButtonEvent (MouseButtonEventData { mouseButtonEventButton = ButtonLeft,
+                                             mouseButtonEventMotion = Pressed,
+                                             mouseButtonEventPos = pos }) -> do
+      winWidth <- gets appWinWidth
+      winHeight <- gets appWinHeight
+
+      vp@(Viewport { viewportCenter = V2 centerX centerY,
+                  viewportWidth = vpWidth,
+                  viewportHeight = vpHeight }) <- gets appViewport
+
+      -- The amount that the center is moved should be relative to the size of
+      -- the viewport.
+      let (P (V2 clickX clickY)) = pos
+          relativeX = fromIntegral clickX / fromIntegral winWidth - 0.5
+          relativeY = fromIntegral clickY / fromIntegral winHeight - 0.5
+          offsetX = relativeX*vpWidth
+          offsetY = relativeY*vpHeight
+          newCenter = V2 (centerX + offsetX) (centerY + offsetY)
+
+      modify (\s -> s { appViewport = vp { viewportCenter = newCenter },
+                        appShouldUpdate = True })
+
     -- Quit when the user closes the window.
     WindowClosedEvent _ -> modify (\s -> s { appShouldQuit = True})
     _ -> return ()
