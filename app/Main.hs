@@ -9,40 +9,66 @@ import Control.Monad.State
 import Data.Complex
 import Data.Time.Clock
 import Data.Time.Format
-import qualified Data.Vector.Storable.Mutable as V
 import Data.Word
 import Foreign.C.String
-import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
 import Foreign.Storable
 import SDL hiding (get)
+import qualified Data.Vector.Storable.Mutable as V
 import qualified SDL.Internal.Types
 import qualified SDL.Raw as Raw
 
+-- The type of fractal that is currently being shown to the user.
 data FractalType = Mandelbrot | JuliaSet
+  deriving (Eq, Ord)
 
+-- An aggregation of state for our application.
 data AppState = AppState
-  { appStateFractal :: FractalType,
-    appStateShouldUpdate :: Bool,
-    appStateScale :: Float
+  { appFractal :: FractalType,
+    appShouldUpdate :: Bool,
+    appScale :: Float,
+    appWinWidth :: Int,
+    appWinHeight :: Int,
+    appMaxIter :: Int
   }
 
+-- The default state of our application.
 defaultAppState :: AppState
 defaultAppState =
   AppState
-    { appStateFractal = Mandelbrot,
-      appStateShouldUpdate = True,
-      appStateScale = 1.0
+    { appFractal = Mandelbrot,
+      appShouldUpdate = True,
+      appScale = 1.0,
+      appWinWidth = 1200,
+      appWinHeight = 800,
+      appMaxIter = 100
     }
 
+-- This is a monad "transformer" which combines the functionallity of an IO
+-- monad and a State monad into one type.
+--
+-- Functions you may find useful:
+--
+-- get :: Monad m => StateT s m s
+--    Fetch the current value of the state within the monad.
+--
+-- put :: Monad m => s -> StateT s m ()
+--    `put s` sets the state within the monad to `s`.
+--
+-- modify :: Monad m => (s -> s) -> StateT s m ()
+--    `modify f` is an action that updates the state to the result of applying
+--    `f` to the current state.
+--
+-- liftIO :: IO a -> m a
+--    Lift a computation from the IO monad. This allows us to run IO
+--    computations in any monadic stack, so long as it supports these kinds of
+--    operations (i.e. IO is the base monad for the stack).
+--
+-- https://en.wikibooks.org/wiki/Haskell/Monad_transformers
+-- https://hackage.haskell.org/package/transformers-0.6.1.1/docs/Control-Monad-Trans-State-Lazy.html
+-- https://hackage.haskell.org/package/base-4.19.1.0/docs/Control-Monad-IO-Class.html#v:liftIO
 type AppMonad = StateT AppState IO
-
-winWidth :: CInt
-winWidth = 1200
-
-winHeight :: CInt
-winHeight = 800
 
 defaultLimits :: V4 Float
 defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
@@ -50,16 +76,16 @@ defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 -- Entry point.
 main :: IO ()
 main = do
+
   -- Initialize SDL.
   initializeAll
 
   -- Create a new SDL window with default settings.
-  window <-
-    createWindow
-      "Mandlebrot Set"
-      defaultWindow
-        { windowInitialSize = V2 winWidth winHeight
-        }
+  let winWidth = fromIntegral $ appWinWidth defaultAppState
+      winHeight = fromIntegral $ appWinHeight defaultAppState
+  window <- createWindow
+    "Mandlebrot Set"
+    defaultWindow { windowInitialSize = V2 winWidth winHeight }
 
   -- Create a renderer from that window.
   renderer <- createRenderer window (-1) defaultRenderer
@@ -73,6 +99,7 @@ main = do
 -- The main loop for the app.
 run :: Window -> Renderer -> AppMonad ()
 run window renderer = do
+
   -- Wait for an event to happen.
   (Event _timestamp payload) <- waitEvent
 
@@ -92,88 +119,109 @@ run window renderer = do
           saveRender window renderer
     _ -> return ()
 
-  -- Change modes with number keys
-  -- There is definitely a cleaner way to do this Haskell just doesn't have finally blocks
+  -- Change modes with number keys.
   case payload of
-    KeyboardEvent keyboardEvent
-      | keyboardEventKeyMotion keyboardEvent == Pressed
-          && keysymKeycode (keyboardEventKeysym keyboardEvent) == Keycode1 ->
-          do
-            modify (\s -> s {appStateFractal = Mandelbrot})
-            modify (\s -> s {appStateShouldUpdate = True})
-    KeyboardEvent keyboardEvent
-      | keyboardEventKeyMotion keyboardEvent == Pressed
-          && keysymKeycode (keyboardEventKeysym keyboardEvent) == Keycode2 ->
-          do
-            modify (\s -> s {appStateFractal = JuliaSet})
-            modify (\s -> s {appStateShouldUpdate = True})
+    KeyboardEvent event | keyboardEventKeyMotion event == Pressed -> do
+      oldFractal <- gets appFractal
+
+      case keysymKeycode (keyboardEventKeysym event) of
+        Keycode1 -> modify (\s -> s {appFractal = Mandelbrot})
+        Keycode2 -> modify (\s -> s {appFractal = JuliaSet})
+        _ -> return()
+
+      newFractal <- gets appFractal
+      when (oldFractal /= newFractal) $ modify (\s -> s {appShouldUpdate = True})
+
     _ -> return ()
 
-  -- Zoom in and out with UP/DOWN ARROW
+  -- Zoom in and out with the up and down arrows.
   case payload of
     KeyboardEvent keyboardEvent
       | keyboardEventKeyMotion keyboardEvent == Pressed
           && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeUp ->
           do
-            scale <- gets appStateScale
-            modify (\s -> s {appStateScale = scale - 0.1})
-            modify (\s -> s {appStateShouldUpdate = True})
+            scale <- gets appScale
+            modify (\s -> s {appScale = scale - 0.1})
+            modify (\s -> s {appShouldUpdate = True})
     KeyboardEvent keyboardEvent
       | keyboardEventKeyMotion keyboardEvent == Pressed
           && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeDown ->
           do
-            scale <- gets appStateScale
-            modify (\s -> s {appStateScale = scale + 0.1})
-            modify (\s -> s {appStateShouldUpdate = True})
+            scale <- gets appScale
+            modify (\s -> s {appScale = scale + 0.1})
+            modify (\s -> s {appShouldUpdate = True})
     _ -> return ()
 
-  -- Render the current mode selected
-  shouldUpdate <- gets appStateShouldUpdate
+  -- Render the current fractal that is selected.
+  shouldUpdate <- gets appShouldUpdate
+
   when shouldUpdate $
     do
-      mode <- gets appStateFractal
+      mode <- gets appFractal
+      maxIter <- gets appMaxIter
       case mode of
-        Mandelbrot -> renderFractal mandelbrot renderer 100
-        JuliaSet -> renderFractal julia renderer 100
-      modify (\s -> s {appStateShouldUpdate = False})
+        Mandelbrot -> renderFractal mandelbrot renderer maxIter
+        JuliaSet -> renderFractal julia renderer maxIter
+      modify (\s -> s {appShouldUpdate = False})
 
   -- If nothing happened, keep running.
   unless shouldQuit (run window renderer)
 
--- Write what's on screen to file
+-- Write what's on screen to a file in the `screenshots/` directory.
 saveRender :: Window -> Renderer -> AppMonad ()
 saveRender window renderer = do
+
+  -- Generate the filename from the current date and time.
   currentTime <- liftIO getCurrentTime
   let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d-%H:%M:%S" currentTime
       filename = "screenshots/" ++ formattedTime ++ ".png"
   filenameC <- liftIO (newCString filename)
 
-  let (SDL.Internal.Types.Renderer rawRenderer) = renderer
-  let (SDL.Internal.Types.Window rawWindow) = window
+  -- Since the functions we need form SDL, namely RenderReadPixels[1] and
+  -- SaveBMP[2], are not part of the "regular" bindings in our Haskell SDL2
+  -- library, we need to use the "raw" functions.
+  --
+  -- This involves using the Haskell <-> C FFI interface.
+  --
+  -- [1]: https://wiki.libsdl.org/SDL2/SDL_RenderReadPixels
+  -- [2]: https://wiki.libsdl.org/SDL2/SDL_SaveBMP
 
+  -- Expose the internal "raw" types for our window and renderer.
+  let (SDL.Internal.Types.Window rawWindow) = window
+  let (SDL.Internal.Types.Renderer rawRenderer) = renderer
+
+  -- Get the raw pixel format of the window.
   pixFormat <- Raw.getWindowPixelFormat rawWindow
 
+  -- Get the dimensions of the window.
+  winWidth <- gets (fromIntegral . appWinWidth)
+  winHeight <- gets (fromIntegral . appWinHeight)
+
+  -- Create an RGB surface for our screenshot.
   surface <-
     Raw.createRGBSurface
-      0
-      winWidth
-      winHeight
-      32
-      0x00ff0000
-      0x0000ff00
-      0x000000ff
-      0xff000000
+      0          -- According to the documentation: "the flags are unused and
+                 -- should be set to 0".
+      winWidth   -- The width of the surface.
+      winHeight  -- The height of the surface.
+      32         -- The depth of the surface.
+      0x00ff0000 -- The red mask of the surface.
+      0x0000ff00 -- The green mask of the surface.
+      0x000000ff -- The blue mask of the surface.
+      0xff000000 -- The alpha mask of the surface.
 
   pixels <- Raw.surfacePixels <$> liftIO (peek surface)
 
+  -- Copy the pixels out of the window and into our screenshot surface.
   _ <-
     Raw.renderReadPixels
-      rawRenderer
-      nullPtr
-      pixFormat
-      pixels
-      4800
+      rawRenderer  -- The rendering context.
+      nullPtr      -- The area to read from (NULL for the entire rendering area).
+      pixFormat    -- The pixel format of the pixel data.
+      pixels       -- The pixels to copy.
+      (winWidth*4) -- The pitch (i.e. the amount of bytes in a row of pixels).
 
+  -- Save the surface to a file.
   _ <- Raw.saveBMP surface filenameC
 
   liftIO $ putStrLn $ "Saved screenshot to " ++ filename
@@ -181,8 +229,13 @@ saveRender window renderer = do
 -- Render the fractal given the callback function
 renderFractal :: (Int -> Complex Float -> Int) -> Renderer -> Int -> AppMonad ()
 renderFractal callback renderer maxIter = do
-  scale <- gets appStateScale
+
+  -- Get some parameters.
+  scale <- gets appScale
   let limits = (* scale) <$> defaultLimits
+
+  winWidth <- gets (fromIntegral . appWinWidth)
+  winHeight <- gets (fromIntegral . appWinHeight)
 
   -- Clear the screen.
   rendererDrawColor renderer $= V4 0 0 0 255
@@ -197,7 +250,7 @@ renderFractal callback renderer maxIter = do
   let vec = V.unsafeFromForeignPtr0 fptr (fromIntegral $ winWidth * pitch)
 
       -- For on-screen coordinates x and y scaled to the provided limits, get the
-      -- value of the mandelbrot function.
+      -- value of the fractal.
       value x y = heatMapColor $ fromIntegral m / fromIntegral maxIter
         where
           V4 xMin yMin xMax yMax = limits
@@ -230,7 +283,7 @@ renderFractal callback renderer maxIter = do
   copy renderer texture Nothing Nothing
   present renderer
 
--- Generate a color given a value between 0.0 and 1.0.
+-- Generate a color, given a value between 0.0 and 1.0.
 --
 -- You can tune the parameters in this function, I've chosen ones that I think
 -- result in a pretty image.
@@ -253,21 +306,18 @@ heatMapColor x = V3 r b g
     -- resulting image is.
     s = 0.8
 
+-- Helper function for the mandelbrot and julia set fractals.
+helper :: Int -> Int -> Complex Float -> Complex Float -> Int
+helper maxIter n z c =
+  if n >= maxIter || magnitude z > 2
+    then n
+    else helper maxIter (n + 1) (z * z + c) c
+
 -- Evaluate the mandelbrot fractal at one point.
 mandelbrot :: Int -> Complex Float -> Int
-mandelbrot maxIter c = helper 0 0
-  where
-    helper n z =
-      if n >= maxIter || magnitude z > 2
-        then n
-        else helper (n + 1) (z * z + c)
+mandelbrot maxIter c = helper maxIter 0 0 c
 
--- Evaluate the julia set at one with a constant
+-- Evaluate the julia set at one point with a predefined constant.
 julia :: Int -> Complex Float -> Int
-julia maxIter = helper 0
-  where
-    constant = (-0.4) :+ 0.6
-    helper n z =
-      if n >= maxIter || magnitude z > 2
-        then n
-        else helper (n + 1) (z * z + constant)
+julia maxIter z = helper maxIter 0 z c
+  where c = (-0.4) :+ 0.6
