@@ -1,4 +1,4 @@
-# mandlebrot-hs
+# mandelbrot-hs
 
 ITCS 4102 Group 2: *The Strongly Typed*
 
