@@ -47,10 +47,6 @@ scaleViewport vp s = vp { viewportWidth = w*s, viewportHeight = h*s}
   where w = viewportWidth vp
         h = viewportHeight vp
 
-
--- defaultLimits :: V4 Float
--- defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
-
 -- An aggregation of state for our application.
 data AppState = AppState
   { appFractal :: FractalType,
