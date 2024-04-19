@@ -46,5 +46,6 @@ cabal run
 | S | Saves a screenshot of the current render to the `screenshots/` folder |
 | [NUM] | Changes fractal mode. `1`: Mandelbrot, `2`: Julia Set |
 | [CLICK] | Clicking a point on the screen moves the viewport to focus on that point |
-| = | Zoom in |
+| + | Zoom in |
 | - | Zoom out |
+| ? | Show a help screen |
