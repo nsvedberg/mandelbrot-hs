@@ -23,6 +23,26 @@ import qualified SDL.Raw as Raw
 data FractalType = Mandelbrot | JuliaSet
   deriving (Eq, Ord)
 
+-- The area of the fractal that is visible to the user.
+data Viewport = Viewport
+  { viewportCenter :: V2 Float,
+    viewportWidth :: Float,
+    viewportHeight :: Float
+  }
+
+viewportLimits :: Viewport -> V4 Float
+viewportLimits vp = V4 left bot right top
+  where left = x - width/2
+        right = x + width/2
+        bot = y - height/2
+        top = y + height/2
+        (V2 x y) = viewportCenter vp
+        width = viewportWidth vp
+        height = viewportHeight vp
+
+-- defaultLimits :: V4 Float
+-- defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
+
 -- An aggregation of state for our application.
 data AppState = AppState
   { appFractal :: FractalType,
@@ -30,7 +50,8 @@ data AppState = AppState
     appScale :: Float,
     appWinWidth :: Int,
     appWinHeight :: Int,
-    appMaxIter :: Int
+    appMaxIter :: Int,
+    appViewport :: Viewport
   }
 
 -- The default state of our application.
@@ -42,7 +63,12 @@ defaultAppState =
       appScale = 1.0,
       appWinWidth = 1200,
       appWinHeight = 800,
-      appMaxIter = 100
+      appMaxIter = 100,
+      appViewport = Viewport {
+        viewportCenter = V2 0 0,
+        viewportWidth = 3.36,
+        viewportHeight = 2.24
+      }
     }
 
 -- This is a monad "transformer" which combines the functionallity of an IO
@@ -69,9 +95,6 @@ defaultAppState =
 -- https://hackage.haskell.org/package/transformers-0.6.1.1/docs/Control-Monad-Trans-State-Lazy.html
 -- https://hackage.haskell.org/package/base-4.19.1.0/docs/Control-Monad-IO-Class.html#v:liftIO
 type AppMonad = StateT AppState IO
-
-defaultLimits :: V4 Float
-defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 
 -- Entry point.
 main :: IO ()
@@ -158,10 +181,9 @@ run window renderer = do
   when shouldUpdate $
     do
       mode <- gets appFractal
-      maxIter <- gets appMaxIter
       case mode of
-        Mandelbrot -> renderFractal mandelbrot renderer maxIter
-        JuliaSet -> renderFractal julia renderer maxIter
+        Mandelbrot -> renderFractal mandelbrot renderer
+        JuliaSet -> renderFractal julia renderer
       modify (\s -> s {appShouldUpdate = False})
 
   -- If nothing happened, keep running.
@@ -227,13 +249,13 @@ saveRender window renderer = do
   liftIO $ putStrLn $ "Saved screenshot to " ++ filename
 
 -- Render the fractal given the callback function
-renderFractal :: (Int -> Complex Float -> Int) -> Renderer -> Int -> AppMonad ()
-renderFractal callback renderer maxIter = do
+renderFractal :: (Int -> Complex Float -> Int) -> Renderer -> AppMonad ()
+renderFractal callback renderer = do
 
   -- Get some parameters.
   scale <- gets appScale
-  let limits = (* scale) <$> defaultLimits
-
+  maxIter <- gets appMaxIter
+  limits <- gets ((\limits -> (* scale) <$> limits) . viewportLimits . appViewport)
   winWidth <- gets (fromIntegral . appWinWidth)
   winHeight <- gets (fromIntegral . appWinHeight)
 
@@ -260,7 +282,7 @@ renderFractal callback renderer maxIter = do
           a = ((fx * (xMax - xMin)) / ((fromIntegral winWidth - 1) - xMin)) + xMin
           -- The imaginary part of the complex number.
           b = ((fy * (yMax - yMin)) / ((fromIntegral winHeight - 1) - yMin)) + yMin
-          -- The value of the mandelbrot fractal.
+          -- The value of the fractal.
           m = callback maxIter (a :+ b)
 
       -- Write an SDL vector3 to the given address.
