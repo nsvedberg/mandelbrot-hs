@@ -30,6 +30,7 @@ data Viewport = Viewport
     viewportHeight :: Float
   }
 
+-- Get the X and Y limits of a viewport.
 viewportLimits :: Viewport -> V4 Float
 viewportLimits vp = V4 left bot right top
   where left = x - width/2
@@ -40,6 +41,13 @@ viewportLimits vp = V4 left bot right top
         width = viewportWidth vp
         height = viewportHeight vp
 
+-- Scale a viewport by a scale factor.
+scaleViewport :: Viewport -> Float -> Viewport
+scaleViewport vp s = vp { viewportWidth = w*s, viewportHeight = h*s}
+  where w = viewportWidth vp
+        h = viewportHeight vp
+
+
 -- defaultLimits :: V4 Float
 -- defaultLimits = V4 (-2.00) (-1.12) 1.36 1.12
 
@@ -47,7 +55,7 @@ viewportLimits vp = V4 left bot right top
 data AppState = AppState
   { appFractal :: FractalType,
     appShouldUpdate :: Bool,
-    appScale :: Float,
+    appShouldQuit :: Bool,
     appWinWidth :: Int,
     appWinHeight :: Int,
     appMaxIter :: Int,
@@ -60,7 +68,7 @@ defaultAppState =
   AppState
     { appFractal = Mandelbrot,
       appShouldUpdate = True,
-      appScale = 1.0,
+      appShouldQuit = False,
       appWinWidth = 1200,
       appWinHeight = 800,
       appMaxIter = 100,
@@ -126,67 +134,41 @@ run window renderer = do
   -- Wait for an event to happen.
   (Event _timestamp payload) <- waitEvent
 
-  -- If the user pressed the Q key or closed the window, we should quit.
-  let shouldQuit = case payload of
-        KeyboardEvent keyboardEvent ->
-          keyboardEventKeyMotion keyboardEvent == Pressed
-            && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeQ
-        WindowClosedEvent _ -> True
-        _ -> False
-
-  -- Screenshot when S is pressed.
   case payload of
-    KeyboardEvent keyboardEvent
-      | keyboardEventKeyMotion keyboardEvent == Pressed
-          && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeS ->
-          saveRender window renderer
-    _ -> return ()
+    KeyboardEvent e@(KeyboardEventData { keyboardEventKeyMotion = Pressed }) ->
+      case (keysymKeycode $ keyboardEventKeysym e) of
+        -- Screenshot when S is pressed.
+        KeycodeS -> saveRender window renderer
+        -- Change modes with number keys.
+        Keycode1 -> do modify (\s -> s {appFractal = Mandelbrot})
+                       modify (\s -> s {appShouldUpdate = True})
+        Keycode2 -> do modify (\s -> s {appFractal = JuliaSet})
+                       modify (\s -> s {appShouldUpdate = True})
+        -- Zoom in and out with the plus and minus buttons.
+        code | code==KeycodeEquals || code==KeycodeMinus -> do
+          let scale = case code of
+                KeycodeEquals -> 3/4
+                KeycodeMinus -> 4/3
 
-  -- Change modes with number keys.
-  case payload of
-    KeyboardEvent event | keyboardEventKeyMotion event == Pressed -> do
-      oldFractal <- gets appFractal
+          vp <- gets appViewport
 
-      case keysymKeycode (keyboardEventKeysym event) of
-        Keycode1 -> modify (\s -> s {appFractal = Mandelbrot})
-        Keycode2 -> modify (\s -> s {appFractal = JuliaSet})
-        _ -> return()
-
-      newFractal <- gets appFractal
-      when (oldFractal /= newFractal) $ modify (\s -> s {appShouldUpdate = True})
-
-    _ -> return ()
-
-  -- Zoom in and out with the up and down arrows.
-  case payload of
-    KeyboardEvent keyboardEvent
-      | keyboardEventKeyMotion keyboardEvent == Pressed
-          && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeUp ->
-          do
-            scale <- gets appScale
-            modify (\s -> s {appScale = scale - 0.1})
-            modify (\s -> s {appShouldUpdate = True})
-    KeyboardEvent keyboardEvent
-      | keyboardEventKeyMotion keyboardEvent == Pressed
-          && keysymKeycode (keyboardEventKeysym keyboardEvent) == KeycodeDown ->
-          do
-            scale <- gets appScale
-            modify (\s -> s {appScale = scale + 0.1})
-            modify (\s -> s {appShouldUpdate = True})
+          modify (\s -> s { appViewport = scaleViewport vp scale,
+                            appShouldUpdate = True
+                          })
+        -- Quit when the user presses Q.
+        KeycodeQ -> modify (\s -> s { appShouldQuit = True})
+        _ -> return ()
+    -- Quit when the user closes the window.
+    WindowClosedEvent _ -> modify (\s -> s { appShouldQuit = True})
     _ -> return ()
 
   -- Render the current fractal that is selected.
   shouldUpdate <- gets appShouldUpdate
-
-  when shouldUpdate $
-    do
-      mode <- gets appFractal
-      case mode of
-        Mandelbrot -> renderFractal mandelbrot renderer
-        JuliaSet -> renderFractal julia renderer
-      modify (\s -> s {appShouldUpdate = False})
+  when shouldUpdate $ renderFractal renderer
+                   >> modify (\s -> s {appShouldUpdate = False})
 
   -- If nothing happened, keep running.
+  shouldQuit <- gets appShouldQuit
   unless shouldQuit (run window renderer)
 
 -- Write what's on screen to a file in the `screenshots/` directory.
@@ -248,16 +230,21 @@ saveRender window renderer = do
 
   liftIO $ putStrLn $ "Saved screenshot to " ++ filename
 
--- Render the fractal given the callback function
-renderFractal :: (Int -> Complex Float -> Int) -> Renderer -> AppMonad ()
-renderFractal callback renderer = do
+-- Render the fractal chosen by the user.
+renderFractal :: Renderer -> AppMonad ()
+renderFractal renderer = do
 
   -- Get some parameters.
-  scale <- gets appScale
   maxIter <- gets appMaxIter
   limits <- gets ((\limits -> (* scale) <$> limits) . viewportLimits . appViewport)
   winWidth <- gets (fromIntegral . appWinWidth)
   winHeight <- gets (fromIntegral . appWinHeight)
+
+  fractalType <- gets appFractal
+
+  let func = case fractalType of
+        Mandelbrot -> mandelbrot
+        JuliaSet -> julia
 
   -- Clear the screen.
   rendererDrawColor renderer $= V4 0 0 0 255
@@ -283,7 +270,7 @@ renderFractal callback renderer = do
           -- The imaginary part of the complex number.
           b = ((fy * (yMax - yMin)) / ((fromIntegral winHeight - 1) - yMin)) + yMin
           -- The value of the fractal.
-          m = callback maxIter (a :+ b)
+          m = func maxIter (a :+ b)
 
       -- Write an SDL vector3 to the given address.
       writeVal addr (V3 w1 w2 w3) =
