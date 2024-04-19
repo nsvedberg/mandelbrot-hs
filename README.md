@@ -10,7 +10,9 @@ Generate an image of the famous Mandelbrot set fractal using SDL2.
 
 You will need Haskell's `cabal` build system. The easiest way to set up Haskell is with [GHCup](https://www.haskell.org/ghcup/).
 
-You will also need SDL2. For Arch:
+After you have GHCup installed, you will need to run `ghcup tui` and make sure you have `GHC 9.2.8 base-4.16.4.0` installed and selected for use.
+
+You will also need SDL2 from your system's package manager. For Arch:
 
 ```bash
 sudo pacman -S sdl2
