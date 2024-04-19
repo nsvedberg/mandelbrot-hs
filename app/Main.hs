@@ -232,7 +232,7 @@ renderFractal renderer = do
 
   -- Get some parameters.
   maxIter <- gets appMaxIter
-  limits <- gets ((\limits -> (* scale) <$> limits) . viewportLimits . appViewport)
+  limits <- gets (viewportLimits . appViewport)
   winWidth <- gets (fromIntegral . appWinWidth)
   winHeight <- gets (fromIntegral . appWinHeight)
 
