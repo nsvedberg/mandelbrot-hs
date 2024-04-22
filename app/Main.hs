@@ -20,6 +20,7 @@ import qualified Data.Vector.Storable.Mutable as V
 import qualified SDL.Internal.Types
 import qualified SDL.Raw as Raw
 
+
 -- The type of fractal that is currently being shown to the user.
 data FractalType = Mandelbrot | JuliaSet
   deriving (Eq, Ord)
@@ -60,6 +61,13 @@ data AppState = AppState
   , appViewport :: Viewport
   , appInfoTexture :: Maybe Texture
   , appFractalTexture :: Maybe Texture
+  , redOffset :: Float
+  , greenOffset :: Float
+  , blueOffset :: Float
+  , saturation :: Float
+  , redPeakOffset :: Float
+  , greenPeakOffset :: Float
+  , bluePeakOffset :: Float
   }
 
 -- The default state of our application.
@@ -78,6 +86,13 @@ defaultAppState =
                              , viewportHeight = 2.24 }
     , appInfoTexture = Nothing
     , appFractalTexture = Nothing
+    , redOffset = 1.0
+    , greenOffset = 1.0
+    , blueOffset = 1.0
+    , saturation = 0.8
+    , redPeakOffset = 1
+    , greenPeakOffset = 1
+    , bluePeakOffset = 1
     }
 
 -- This is a monad "transformer" which combines the functionallity of an IO
@@ -189,6 +204,23 @@ run window renderer = do
         KeycodeSlash -> modify (\s -> s { appShouldShowInfo = True })
         -- Quit when the user presses Q.
         KeycodeQ -> modify (\s -> s { appShouldQuit = True})
+        -- Colors
+        KeycodeR -> do modify (\s -> s {redOffset = addOffset (redOffset s)})
+                       modify (\s -> s {appShouldUpdate = True})
+        KeycodeG -> do modify (\s -> s {greenOffset = addOffset (greenOffset s)})
+                       modify (\s -> s {appShouldUpdate = True})
+        KeycodeB -> do modify (\s -> s {blueOffset = addOffset (blueOffset s)})
+                       modify (\s -> s {appShouldUpdate = True})
+        KeycodeZ -> do modify (\s -> s {saturation = addOffset (saturation s)})
+                       modify (\s -> s {appShouldUpdate = True})
+        KeycodeLeft -> do modify (\s -> s {redPeakOffset = addOffset (redPeakOffset s)})
+                          modify (\s -> s {appShouldUpdate = True})
+        KeycodeUp -> do modify (\s -> s {greenPeakOffset = addOffset (greenPeakOffset s)})
+                        modify (\s -> s {appShouldUpdate = True})
+        KeycodeRight-> do modify (\s -> s {bluePeakOffset = addOffset (bluePeakOffset s)})
+                          modify (\s -> s {appShouldUpdate = True})
+
+
         -- Ignore other keycodes.
         _ -> return ()
 
@@ -331,14 +363,22 @@ renderAll renderer = do
 -- Render the fractal chosen by the user.
 updateFractalTexture :: Renderer -> Texture -> AppMonad ()
 updateFractalTexture renderer texture = do
-
   -- Get some parameters.
+
   maxIter <- gets appMaxIter
   limits <- gets (viewportLimits . appViewport)
   winWidth <- gets (fromIntegral . appWinWidth)
   winHeight <- gets (fromIntegral . appWinHeight)
 
   fractalType <- gets appFractal
+
+  redOffset <- gets redOffset
+  greenOffset <- gets greenOffset
+  blueOffset <- gets blueOffset
+  saturation <- gets saturation
+  redPeakOffset <- gets redPeakOffset
+  greenPeakOffset <- gets greenPeakOffset
+  bluePeakOffset <- gets bluePeakOffset
 
   let func = case fractalType of
         Mandelbrot -> mandelbrot
@@ -351,7 +391,7 @@ updateFractalTexture renderer texture = do
 
       -- For on-screen coordinates x and y scaled to the provided limits, get the
       -- value of the fractal.
-      value x y = heatMapColor $ fromIntegral m / fromIntegral maxIter
+      value x y = heatMapColor (fromIntegral m / fromIntegral maxIter) redOffset greenOffset blueOffset saturation redPeakOffset greenPeakOffset bluePeakOffset
         where
           V4 xMin yMin xMax yMax = limits
           fx = fromIntegral x
@@ -384,25 +424,22 @@ updateFractalTexture renderer texture = do
 -- Generate a color, given a value between 0.0 and 1.0.
 --
 -- You can tune the parameters in this function, I've chosen ones that I think
--- result in a pretty image.
+-- result in a pretty image. (Blue and green are swapped on purpose)
 --
 -- By the way, this function uses cosine because it's the first thing I thought
 -- of, but linear interpolation may be simpler and faster.
-heatMapColor :: Float -> V3 Word8
-heatMapColor x = V3 r b g
+heatMapColor :: Float -> Float -> Float -> Float -> Float -> Float -> Float -> Float -> V3 Word8
+heatMapColor x redOffset greenOffset blueOffset saturation redPeakOffset greenPeakOffset bluePeakOffset = V3 r b g
   where
-    r = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** s - rp))
-    g = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** s - gp))
-    b = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** s - bp))
+    r = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** saturation - rp)) * redOffset
+    g = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** saturation - gp)) * blueOffset
+    b = round $ max 0 $ 255 * cos ((3 * pi / 2) * (x ** saturation - bp)) * greenOffset
     -- The center of the red peak.
-    rp = 10 / 15
+    rp = (10/15) * redPeakOffset
     -- The center of the green peak.
-    gp = 4 / 15
+    gp = (4/15) * bluePeakOffset
     -- The center of the blue peak.
-    bp = 7 / 15
-    -- Exponential factor, changing this will affect how "saturated" the
-    -- resulting image is.
-    s = 0.8
+    bp = (7/16) * greenPeakOffset
 
 -- Helper function for the mandelbrot and julia set fractals.
 helper :: Int -> Int -> Complex Float -> Complex Float -> Int
@@ -419,3 +456,10 @@ mandelbrot maxIter c = helper maxIter 0 0 c
 julia :: Int -> Complex Float -> Int
 julia maxIter z = helper maxIter 0 z c
   where c = (-0.4) :+ 0.6
+
+--Loop through 0.0 1.0 for offsets
+addOffset :: Float -> Float
+addOffset x
+  | x < 1.0 = min 1.0 (x + 0.1)
+  | x >= 1.0 = 0.0
+  | otherwise = x
