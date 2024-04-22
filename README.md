@@ -44,6 +44,11 @@ cabal run
 | :-: | :- |
 | Q | Quits the program |
 | S | Saves a screenshot of the current render to the `screenshots/` folder |
+| R | Adjust the red offset. |
+| G | Adjust the green offset. |
+| B | Adjust the blue offset. |
+| Z | Adjust the saturation offset. |
+| [ARROW] | Adjust the colors. |
 | [NUM] | Changes fractal mode. `1`: Mandelbrot, `2`: Julia Set |
 | [CLICK] | Clicking a point on the screen moves the viewport to focus on that point |
 | + | Zoom in |
